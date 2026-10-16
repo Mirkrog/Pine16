@@ -15,6 +15,9 @@
 ;     randomised altitude, speed and direction, wobbles as it flies,
 ;     drifts along with the shared starfield heading, and is only
 ;     hidden once it has actually left the screen
+;   - a chiptune soundtrack, "Neon Promise", an original tune in
+;     late-60s soul-pop style, played by a tiny tracker on all five
+;     audio channels (lead, bass, chord arpeggio, kick, snare/hi-hat)
 ;
 ; Paced with AWAIT on the VBLANK flag ($#8) so one pass of main_loop
 ; runs exactly once per real rendered frame, no matter how fast the
@@ -1903,7 +1906,546 @@ mov $#7511 #70         ; frames between each 1-step angle turn (~2-3s)
 ; $#7020 = animation phase (0-15), starts at 0 (default)
 
 ; ---------------------------------------------------------
-; 6. Main loop
+; 6. Music: "Neon Promise"
+;    A tiny tracker: the order list at $#8300 names one 16-step
+;    pattern (one bar) after the other, each step holds 4 words
+;    (melody, bass, chord, drums), and a step lasts 4 frames.
+;
+;    Song data:
+;      $#8100 + n      frequency in Hz of note n (n = MIDI note - 23)
+;      $#8200 + 3*c    the three arpeggio frequencies of chord c
+;      $#8300 + i      address of the i-th bar's pattern, 0 ends the song
+;      pattern + 4*s   melody, bass, chord, drums of 16th step s
+;        melody/bass:  0 = nothing, 255 = note off, else note n
+;        chord:        0 = nothing, else chord c
+;        drums:        bit 0 kick, bit 1 snare, bit 2 hi-hat
+;
+;    Audio channels (frequency, config = modifier<<8 | volume):
+;      $#6543/$#6544 sine      kick drum (pitch sweep)
+;      $#6545/$#6546 triangle  bass
+;      $#6547/$#6548 saw       chord arpeggio
+;      $#6549/$#6550 square    melody (25% duty)
+;      $#6551/$#6552 noise     snare / hi-hat
+;
+;    Player state:
+;      $#8000 frames until the next step   $#8001 step pointer
+;      $#8002 steps left in the pattern    $#8003 order list pointer
+;      $#8004 melody volume                $#8005 bass volume
+;      $#8006 kick frames left             $#8007 noise volume
+;      $#8008 noise decay per frame        $#8009 noise modifier
+;      $#8010-$#8012 chord arpeggio Hz     $#8013 arpeggio index
+; ---------------------------------------------------------
+; --- BEGIN MUSIC DATA ---
+; note frequency table (Hz)
+.dw at 8114 69
+.dw at 8116 78
+.dw at 8117 82
+.dw at 8119 92
+.dw at 8121 104
+.dw at 8122 110
+.dw at 8123 117
+.dw at 8124 123
+.dw at 8126 139
+.dw at 8128 156
+.dw at 8129 165
+.dw at 8131 185
+.dw at 8133 208
+.dw at 8134 220
+.dw at 8136 247
+.dw at 8140 311
+.dw at 8141 330
+.dw at 8143 370
+.dw at 8145 415
+.dw at 8146 440
+.dw at 8148 494
+.dw at 8150 554
+.dw at 8152 622
+.dw at 8153 659
+.dw at 8155 740
+.dw at 8157 831
+.dw at 8158 880
+.dw at 8160 988
+; chord arpeggio table (Hz)
+.dw at 8203 330
+.dw at 8204 415
+.dw at 8205 494
+.dw at 8206 311
+.dw at 8207 370
+.dw at 8208 494
+.dw at 8209 330
+.dw at 8210 415
+.dw at 8211 554
+.dw at 8212 330
+.dw at 8213 440
+.dw at 8214 554
+.dw at 8215 370
+.dw at 8216 494
+.dw at 8217 622
+.dw at 8218 330
+.dw at 8219 415
+.dw at 8220 494
+.dw at 8221 370
+.dw at 8222 440
+.dw at 8223 554
+; order list (53 bars), 0 terminated
+.dw at 8300 9000
+.dw at 8301 9064
+.dw at 8302 9128
+.dw at 8303 9192
+.dw at 8304 9000
+.dw at 8305 9064
+.dw at 8306 9128
+.dw at 8307 9192
+.dw at 8308 9256
+.dw at 8309 9320
+.dw at 8310 9384
+.dw at 8311 9448
+.dw at 8312 9256
+.dw at 8313 9320
+.dw at 8314 9384
+.dw at 8315 9512
+.dw at 8316 9576
+.dw at 8317 9640
+.dw at 8318 9704
+.dw at 8319 9768
+.dw at 8320 9576
+.dw at 8321 9832
+.dw at 8322 9896
+.dw at 8323 9960
+.dw at 8324 9000
+.dw at 8325 9064
+.dw at 8326 9128
+.dw at 8327 9192
+.dw at 8328 9256
+.dw at 8329 9320
+.dw at 8330 9384
+.dw at 8331 9448
+.dw at 8332 9256
+.dw at 8333 9320
+.dw at 8334 9384
+.dw at 8335 9512
+.dw at 8336 9576
+.dw at 8337 9640
+.dw at 8338 9704
+.dw at 8339 9768
+.dw at 8340 9576
+.dw at 8341 9832
+.dw at 8342 9896
+.dw at 8343 9960
+.dw at 8344 9576
+.dw at 8345 9640
+.dw at 8346 9704
+.dw at 8347 9768
+.dw at 8348 9576
+.dw at 8349 9832
+.dw at 8350 9896
+.dw at 8351 9960
+.dw at 8352 10024
+; patterns (17 unique bars, 4 words per step)
+.dw at 9000 53
+.dw at 9001 17
+.dw at 9002 1
+.dw at 9003 5
+.dw at 9009 17
+.dw at 9011 4
+.dw at 9012 57
+.dw at 9017 24
+.dw at 9019 2
+.dw at 9024 60
+.dw at 9025 29
+.dw at 9027 4
+.dw at 9033 17
+.dw at 9035 5
+.dw at 9040 58
+.dw at 9041 17
+.dw at 9043 4
+.dw at 9048 57
+.dw at 9049 24
+.dw at 9051 2
+.dw at 9057 29
+.dw at 9059 4
+.dw at 9060 255
+.dw at 9064 55
+.dw at 9065 16
+.dw at 9066 2
+.dw at 9067 5
+.dw at 9073 16
+.dw at 9075 4
+.dw at 9076 52
+.dw at 9081 23
+.dw at 9083 2
+.dw at 9088 48
+.dw at 9089 28
+.dw at 9091 4
+.dw at 9097 16
+.dw at 9099 5
+.dw at 9104 50
+.dw at 9105 16
+.dw at 9107 4
+.dw at 9112 52
+.dw at 9113 23
+.dw at 9115 2
+.dw at 9121 28
+.dw at 9123 4
+.dw at 9124 255
+.dw at 9128 53
+.dw at 9129 14
+.dw at 9130 3
+.dw at 9131 5
+.dw at 9137 14
+.dw at 9139 4
+.dw at 9140 50
+.dw at 9145 21
+.dw at 9147 2
+.dw at 9152 45
+.dw at 9153 26
+.dw at 9155 4
+.dw at 9161 14
+.dw at 9163 5
+.dw at 9168 48
+.dw at 9169 14
+.dw at 9171 4
+.dw at 9176 50
+.dw at 9177 21
+.dw at 9179 2
+.dw at 9185 26
+.dw at 9187 4
+.dw at 9188 255
+.dw at 9192 46
+.dw at 9193 22
+.dw at 9194 4
+.dw at 9195 5
+.dw at 9200 48
+.dw at 9201 22
+.dw at 9203 4
+.dw at 9208 50
+.dw at 9209 29
+.dw at 9211 2
+.dw at 9217 34
+.dw at 9219 4
+.dw at 9224 52
+.dw at 9225 24
+.dw at 9226 5
+.dw at 9227 5
+.dw at 9233 24
+.dw at 9235 4
+.dw at 9240 55
+.dw at 9241 31
+.dw at 9243 2
+.dw at 9249 36
+.dw at 9251 4
+.dw at 9252 255
+.dw at 9256 255
+.dw at 9257 22
+.dw at 9258 4
+.dw at 9259 5
+.dw at 9260 255
+.dw at 9264 50
+.dw at 9265 22
+.dw at 9267 4
+.dw at 9272 50
+.dw at 9273 29
+.dw at 9275 2
+.dw at 9280 48
+.dw at 9281 34
+.dw at 9283 4
+.dw at 9288 46
+.dw at 9289 22
+.dw at 9291 5
+.dw at 9297 22
+.dw at 9299 4
+.dw at 9304 41
+.dw at 9305 29
+.dw at 9307 2
+.dw at 9313 34
+.dw at 9315 4
+.dw at 9316 255
+.dw at 9320 45
+.dw at 9321 21
+.dw at 9322 6
+.dw at 9323 5
+.dw at 9329 21
+.dw at 9331 4
+.dw at 9336 48
+.dw at 9337 28
+.dw at 9339 2
+.dw at 9345 33
+.dw at 9347 4
+.dw at 9352 53
+.dw at 9353 21
+.dw at 9355 5
+.dw at 9360 52
+.dw at 9361 21
+.dw at 9363 4
+.dw at 9368 48
+.dw at 9369 28
+.dw at 9371 2
+.dw at 9377 33
+.dw at 9379 4
+.dw at 9380 255
+.dw at 9384 255
+.dw at 9385 19
+.dw at 9386 7
+.dw at 9387 5
+.dw at 9388 255
+.dw at 9392 46
+.dw at 9393 19
+.dw at 9395 4
+.dw at 9400 46
+.dw at 9401 26
+.dw at 9403 2
+.dw at 9408 45
+.dw at 9409 31
+.dw at 9411 4
+.dw at 9416 43
+.dw at 9417 19
+.dw at 9419 5
+.dw at 9425 19
+.dw at 9427 4
+.dw at 9432 50
+.dw at 9433 26
+.dw at 9435 2
+.dw at 9441 31
+.dw at 9443 4
+.dw at 9444 255
+.dw at 9448 48
+.dw at 9449 24
+.dw at 9450 5
+.dw at 9451 5
+.dw at 9457 24
+.dw at 9459 4
+.dw at 9465 31
+.dw at 9467 2
+.dw at 9473 36
+.dw at 9475 4
+.dw at 9476 255
+.dw at 9480 52
+.dw at 9481 24
+.dw at 9483 5
+.dw at 9488 50
+.dw at 9489 24
+.dw at 9491 4
+.dw at 9496 48
+.dw at 9497 31
+.dw at 9499 2
+.dw at 9504 46
+.dw at 9505 36
+.dw at 9507 4
+.dw at 9512 43
+.dw at 9513 24
+.dw at 9514 5
+.dw at 9515 5
+.dw at 9520 45
+.dw at 9521 24
+.dw at 9523 4
+.dw at 9528 46
+.dw at 9529 31
+.dw at 9531 2
+.dw at 9536 48
+.dw at 9537 36
+.dw at 9539 4
+.dw at 9544 50
+.dw at 9545 24
+.dw at 9547 2
+.dw at 9552 52
+.dw at 9553 24
+.dw at 9555 2
+.dw at 9560 55
+.dw at 9561 31
+.dw at 9563 2
+.dw at 9567 2
+.dw at 9569 36
+.dw at 9571 2
+.dw at 9572 255
+.dw at 9575 2
+.dw at 9576 53
+.dw at 9577 17
+.dw at 9578 1
+.dw at 9579 5
+.dw at 9585 17
+.dw at 9587 4
+.dw at 9592 53
+.dw at 9593 24
+.dw at 9595 2
+.dw at 9600 52
+.dw at 9601 29
+.dw at 9603 4
+.dw at 9608 53
+.dw at 9609 17
+.dw at 9611 5
+.dw at 9617 17
+.dw at 9619 4
+.dw at 9624 57
+.dw at 9625 24
+.dw at 9627 2
+.dw at 9633 29
+.dw at 9635 4
+.dw at 9636 255
+.dw at 9640 55
+.dw at 9641 16
+.dw at 9642 2
+.dw at 9643 5
+.dw at 9649 16
+.dw at 9651 4
+.dw at 9656 52
+.dw at 9657 23
+.dw at 9659 2
+.dw at 9665 28
+.dw at 9667 4
+.dw at 9672 48
+.dw at 9673 16
+.dw at 9675 5
+.dw at 9681 16
+.dw at 9683 4
+.dw at 9688 255
+.dw at 9689 23
+.dw at 9691 2
+.dw at 9692 255
+.dw at 9696 255
+.dw at 9697 28
+.dw at 9699 4
+.dw at 9700 255
+.dw at 9704 50
+.dw at 9705 14
+.dw at 9706 3
+.dw at 9707 5
+.dw at 9713 14
+.dw at 9715 4
+.dw at 9720 50
+.dw at 9721 21
+.dw at 9723 2
+.dw at 9728 52
+.dw at 9729 26
+.dw at 9731 4
+.dw at 9736 53
+.dw at 9737 14
+.dw at 9739 5
+.dw at 9745 14
+.dw at 9747 4
+.dw at 9752 45
+.dw at 9753 21
+.dw at 9755 2
+.dw at 9761 26
+.dw at 9763 4
+.dw at 9764 255
+.dw at 9768 46
+.dw at 9769 22
+.dw at 9770 4
+.dw at 9771 5
+.dw at 9777 22
+.dw at 9779 4
+.dw at 9784 48
+.dw at 9785 29
+.dw at 9787 2
+.dw at 9793 34
+.dw at 9795 4
+.dw at 9800 52
+.dw at 9801 24
+.dw at 9802 5
+.dw at 9803 5
+.dw at 9809 24
+.dw at 9811 4
+.dw at 9817 31
+.dw at 9819 2
+.dw at 9825 36
+.dw at 9827 4
+.dw at 9828 255
+.dw at 9832 55
+.dw at 9833 16
+.dw at 9834 2
+.dw at 9835 5
+.dw at 9841 16
+.dw at 9843 4
+.dw at 9848 57
+.dw at 9849 23
+.dw at 9851 2
+.dw at 9856 55
+.dw at 9857 28
+.dw at 9859 4
+.dw at 9864 52
+.dw at 9865 16
+.dw at 9867 5
+.dw at 9873 16
+.dw at 9875 4
+.dw at 9880 48
+.dw at 9881 23
+.dw at 9883 2
+.dw at 9889 28
+.dw at 9891 4
+.dw at 9892 255
+.dw at 9896 53
+.dw at 9897 14
+.dw at 9898 3
+.dw at 9899 5
+.dw at 9905 14
+.dw at 9907 4
+.dw at 9912 52
+.dw at 9913 21
+.dw at 9915 2
+.dw at 9920 50
+.dw at 9921 26
+.dw at 9923 4
+.dw at 9928 48
+.dw at 9929 14
+.dw at 9931 5
+.dw at 9937 14
+.dw at 9939 4
+.dw at 9944 50
+.dw at 9945 21
+.dw at 9947 2
+.dw at 9953 26
+.dw at 9955 4
+.dw at 9956 255
+.dw at 9960 46
+.dw at 9961 22
+.dw at 9962 4
+.dw at 9963 5
+.dw at 9969 22
+.dw at 9971 4
+.dw at 9976 48
+.dw at 9977 29
+.dw at 9979 2
+.dw at 9985 34
+.dw at 9987 4
+.dw at 9992 50
+.dw at 9993 24
+.dw at 9994 5
+.dw at 9995 5
+.dw at 10001 24
+.dw at 10003 4
+.dw at 10008 52
+.dw at 10009 31
+.dw at 10011 2
+.dw at 10017 36
+.dw at 10019 4
+.dw at 10024 53
+.dw at 10025 17
+.dw at 10026 1
+.dw at 10027 5
+.dw at 10033 17
+.dw at 10035 4
+.dw at 10041 24
+.dw at 10043 2
+.dw at 10049 29
+.dw at 10051 4
+.dw at 10057 17
+.dw at 10059 5
+.dw at 10065 17
+.dw at 10067 4
+.dw at 10072 255
+.dw at 10073 24
+.dw at 10075 2
+.dw at 10076 255
+.dw at 10080 255
+.dw at 10081 29
+.dw at 10083 4
+.dw at 10084 255
+; --- END MUSIC DATA ---
+mov $#8003 #8300       ; start at the top of the order list
+mov $#6551 #1          ; the noise channel only needs a non-zero frequency
+
+; ---------------------------------------------------------
+; 7. Main loop
 ; ---------------------------------------------------------
 main_loop:
 
@@ -2630,6 +3172,147 @@ mov $#4943 #33
 mov $#7301 #250
 
 ship_state_done:
+
+; --- music: advance the song by one frame ---
+mov *A $#8000
+jne music_frame *A
+
+; a new step is due; fetch the next pattern when this one is done
+mov *A $#8002
+jne music_step *A
+music_next_order:
+mov *B $#8003
+mov *C $*B
+jne music_order_ok *C
+mov $#8003 #8300       ; end of the order list: loop the song
+jmp music_next_order
+music_order_ok:
+add $#8003 #1
+mov $#8001 *C
+mov $#8002 #16
+
+music_step:
+sub $#8002 #1
+mov *D $#8001
+add $#8001 #4
+
+; melody: note n -> square channel, 255 = note off
+mov *A $*D
+jeq music_melody_done *A
+mov *B *A
+sub *B #255
+jne music_melody_on *B
+mov $#8004 #0
+jmp music_melody_done
+music_melody_on:
+add *A #8100
+mov $#6549 $*A
+mov $#8004 #150
+music_melody_done:
+
+; bass: note n -> triangle channel
+add *D #1
+mov *A $*D
+jeq music_bass_done *A
+add *A #8100
+mov $#6545 $*A
+mov $#8005 #220
+music_bass_done:
+
+; chord: copy its three arpeggio frequencies
+add *D #1
+mov *A $*D
+jeq music_chord_done *A
+mul *A #3
+add *A #8200
+mov $#8010 $*A
+add *A #1
+mov $#8011 $*A
+add *A #1
+mov $#8012 $*A
+music_chord_done:
+
+; drums: bit 0 kick, bit 1 snare, bit 2 hi-hat
+add *D #1
+mov *A $*D
+mov *B *A
+and *B #1
+jeq music_no_kick *B
+mov $#8006 #6
+music_no_kick:
+mov *B *A
+and *B #2
+jeq music_no_snare *B
+mov $#8007 #150
+mov $#8008 #25
+mov $#8009 #0
+jmp music_drums_done
+music_no_snare:
+and *A #4
+jeq music_drums_done *A
+mov $#8007 #60
+mov $#8008 #20
+mov $#8009 #0x0100     ; short-tap LFSR: a thinner, metallic hiss
+music_drums_done:
+mov $#8000 #4
+
+music_frame:
+sub $#8000 #1
+
+; melody envelope: decay from 150 to a sustain level of 96
+mov *A $#8004
+jeq music_melody_env_done *A
+sub *A #96
+jeq music_melody_env_done *A
+sub $#8004 #6
+music_melody_env_done:
+mov *A $#8004
+or *A #0x4000
+mov $#6550 *A
+
+; bass envelope: plucked, decays to silence
+mov *A $#8005
+jeq music_bass_env_done *A
+sub $#8005 #10
+music_bass_env_done:
+mov $#6546 $#8005
+
+; chord arpeggio: cycle through the three notes, one per frame
+add $#8013 #1
+mov *A $#8013
+sub *A #3
+jne music_arp_ok *A
+mov $#8013 #0
+music_arp_ok:
+mov *A $#8013
+add *A #8010
+mov $#6547 $*A
+mov $#6548 #45
+
+; kick: sine sweeping down in pitch and volume
+mov *A $#8006
+jeq music_kick_off *A
+mov *B *A
+mul *B #25
+add *B #40
+mov $#6543 *B
+mul *A #40
+mov $#6544 *A
+sub $#8006 #1
+jmp music_kick_done
+music_kick_off:
+mov $#6544 #0
+music_kick_done:
+
+; snare / hi-hat: noise decaying to silence
+mov *A $#8007
+jeq music_noise_env_done *A
+sub *A $#8008
+mov $#8007 *A
+music_noise_env_done:
+mov *A $#8007
+or *A $#8009
+mov $#6552 *A
 
 ; wait for the next real frame, then do it all again
 await #8
